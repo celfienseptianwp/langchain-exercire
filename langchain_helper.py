@@ -1,65 +1,34 @@
 from dotenv import load_dotenv
-from typing import Optional, List, Any, Dict
-import requests
-from langchain_core.language_models.llms import LLM
+from llm_wrapper import MyCustomLLM
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 import os
 
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from langchain_community.tools import WikipediaQueryRun
+from langchain_community.utilities import WikipediaAPIWrapper
+
 load_dotenv()
 
-# =========================
-# Customable LLM using API
-# =========================
-class MyCustomLLM(LLM):
-    api_url: str
-    api_key: str
-    model: str = "google/gemma-3-4b-it:free"
-
-    @property
-    def _llm_type(self) -> str:
-        return "openrouter-custom"
-
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        }
-
-        response = requests.post(self.api_url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        # Ambil teks hasil dari format OpenRouter
-        return data["choices"][0]["message"]["content"]
-
-# =========================
-# Task for LLM
-# =========================
+# ===========================
+# Task for LLM via LangChain
+# ===========================
 def generate_pet_name(animal_type, pet_color):
     parser = StrOutputParser()
 
     # LLM Wrappers
     llm = MyCustomLLM(
-        api_url=os.getenv("API_URL"),
-        api_key=os.getenv("API_KEY"),
-        model=os.getenv("MODEL")
+        api_url = os.getenv("API_URL"),
+        api_key = os.getenv("API_KEY"),
+        model = os.getenv("MODEL")
     )
 
     # Prompt Templates
     prompt_template_name = PromptTemplate(
-        input_variables=["animal_type", "pet_color"],
-        template="I have a {animal_type} and I want a cool name for it, it is {pet_color} in color. Suggest three cool names without any explanation"
+        input_variables = ["animal_type", "pet_color"],
+        template = "I have a {animal_type} and I want a cool name for it, it is {pet_color} in color. Suggest three cool names without any explanation"
     )
     
     # Chains
@@ -68,5 +37,55 @@ def generate_pet_name(animal_type, pet_color):
 
     return response
 
+# =========================
+# LLM Agents via LangChain
+# =========================
+@tool
+def multiply(a: float, b: float) -> float:
+    "Multiply two numbers"
+    return a * b
+
+wikipedia = WikipediaQueryRun(
+    api_wrapper=WikipediaAPIWrapper
+)
+
+tools = [wikipedia, multiply]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful AI assistant. Use tools when necessary to answer questions."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}")
+])
+
+def langchain_agent():
+    # LLM Wrappers
+    llm = MyCustomLLM(
+        api_url = os.getenv("API_URL"),
+        api_key = os.getenv("API_KEY"),
+        model = os.getenv("MODEL")
+    )
+    
+    # Agents
+    agent = create_react_agent(
+        model = llm,
+        tools = tools,
+        prompt = prompt
+    )
+
+    # Executor
+    executor = AgentExecutor(
+        agent = agent,
+        tools = tools,
+        verbose = True
+    )
+
+    # Run
+    result = executor.invoke({
+        "input": "What is the average age of a dog? Multiply age by 3"
+    })
+
+    print(result["output"])
+
 if __name__ == "__main__":
-    print(generate_pet_name("dragon", "red"))
+    # print(generate_pet_name("dragon", "red"))
+    langchain_agent()
